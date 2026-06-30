@@ -1,4 +1,4 @@
-# Rotating Earth — ECI vs ECEF reference frames
+# Rotating Earth: ECI vs ECEF reference frames
 
 Four animations of a rotating Earth, built in **increasing levels of
 sophistication** with progressively more capable rendering libraries. Each one
@@ -19,7 +19,7 @@ table.
 
 Two coordinate frames share the same origin at the Earth's centre.
 
-### ECI — Earth-Centred Inertial (fixed in space)
+### ECI (Earth-Centred Inertial, i.e. fixed in space)
 
 A non-rotating frame. It does **not** turn with the Earth, so Newton's laws hold
 without fictitious forces — this is the frame you integrate orbits in.
@@ -30,7 +30,7 @@ without fictitious forces — this is the frame you integrate orbits in.
   latitude) at *t = 0*.
 * **Y** — completes the right-handed triad (`Y = Z × X`).
 
-### ECEF — Earth-Centred, Earth-Fixed (rotates with the crust)
+### ECEF (Earth-Centred, Earth-Fixed i.e. rotates with the crust)
 
 Bolted to the planet, so a point on the ground keeps constant coordinates. This
 is the frame of latitude/longitude, GPS and ground stations.
@@ -111,7 +111,7 @@ Uses PyVista's bundled globe + texture when available, otherwise builds a
 UV-sphere with a procedural texture. Headless export needs an off-screen GL
 stack (e.g. `pyvista.start_xvfb()` on Linux, called automatically).
 
-## 4 · WebGL — the showpiece
+## 4 · WebGL
 
 A self-contained, real-time WebGL app built on **three.js**, with a custom GLSL
 shader. Just open the file in any modern browser — no build step, no server:
@@ -128,7 +128,7 @@ What makes this one special:
 
 * **Custom Earth shader** combining a day map, **night-side city lights**,
   a glossy **ocean sun-glint**, normal-mapped surface relief, and **lit, drifting
-  clouds** — with a soft, physically plausible day/night terminator.
+  clouds**: with a soft, physically plausible day/night terminator.
 * **Volumetric-style atmosphere** — an additive Fresnel rim shell that brightens
   on the sunlit limb.
 * **Procedural starfield**, a glowing **Sun sprite**, and ACES filmic tone
@@ -156,9 +156,9 @@ the shader falls back to solid-colour placeholders so the scene still renders.
 
 All four scripts expose the same constants near the top:
 
-* `ROTATIONS` / `--rotations` — number of turns (default **5**).
-* `SUN_DIR` — the fixed inertial Sun direction.
-* `PRIME_MERIDIAN_OFFSET` (WebGL) — aligns 0° longitude to +X at *t = 0* for a
+* `ROTATIONS` / `--rotations`: number of turns (default **5**).
+* `SUN_DIR`: the fixed inertial Sun direction.
+* `PRIME_MERIDIAN_OFFSET` (WebGL): aligns 0° longitude to +X at *t = 0* for a
   given texture.
 
 ## Verification
