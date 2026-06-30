@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Rendered animation outputs (regenerate with the scripts)
+earth_matplotlib.gif
+earth_pyvista.gif
+*.mp4

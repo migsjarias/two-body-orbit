@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rotating Earth — ECI vs ECEF (WebGL)</title>
+<style>
+  :root { --glass: rgba(14,18,32,0.55); --stroke: rgba(120,160,255,0.25); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #02030a; color: #e8eefc;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .panel {
+    position: fixed; backdrop-filter: blur(14px) saturate(140%);
+    background: var(--glass); border: 1px solid var(--stroke);
+    border-radius: 16px; box-shadow: 0 8px 40px rgba(0,0,0,.45);
+  }
+  #hud { top: 18px; left: 18px; padding: 16px 18px; max-width: 320px; }
+  #hud h1 { margin: 0 0 4px; font-size: 16px; font-weight: 650;
+    letter-spacing: .2px; }
+  #hud p  { margin: 0; font-size: 12px; line-height: 1.5; color: #aab8de; }
+
+  .legend { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px 14px; }
+  .legend div { display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; color: #cdd8f5; }
+  .sw { width: 16px; height: 3px; border-radius: 2px; flex: none; }
+
+  #readout { margin-top: 12px; font-variant-numeric: tabular-nums; }
+  #readout .big { font-size: 26px; font-weight: 700; letter-spacing: .5px; }
+  #readout .sub { font-size: 11px; color: #8ea0cd; text-transform: uppercase;
+    letter-spacing: 1.5px; }
+  .bar { height: 6px; border-radius: 4px; margin-top: 8px;
+    background: rgba(255,255,255,.08); overflow: hidden; }
+  .bar > i { display:block; height:100%; width:0;
+    background: linear-gradient(90deg,#3aa0ff,#7cf6ff); transition: width .08s; }
+
+  #controls { bottom: 18px; left: 50%; transform: translateX(-50%);
+    padding: 10px 14px; display: flex; align-items: center; gap: 14px; }
+  button { cursor: pointer; color: #eaf1ff; background: rgba(70,110,200,.22);
+    border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 14px;
+    font-size: 13px; font-weight: 600; transition: background .15s; }
+  button:hover { background: rgba(90,140,240,.38); }
+  .ctl { display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: #aab8de; }
+  input[type=range] { width: 130px; accent-color: #5aa0ff; }
+
+  #loading { position: fixed; inset: 0; display: grid; place-items: center;
+    font-size: 14px; color: #9fb0da; z-index: 50; transition: opacity .6s; }
+  .spinner { width: 34px; height: 34px; margin: 0 auto 14px;
+    border: 3px solid rgba(120,160,255,.25); border-top-color: #6aa6ff;
+    border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hint { position: fixed; bottom: 16px; right: 18px; font-size: 11px;
+    color: #6b7aa0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="loading"><div><div class="spinner"></div>loading textures…</div></div>
+
+<div id="hud" class="panel">
+  <h1>Rotating Earth — ECI vs ECEF</h1>
+  <p>The <b>ECI</b> triad is fixed in inertial space; <b>Z</b> is the spin
+     axis through the North Pole. The <b>ECEF</b> axes are bolted to the
+     crust and turn with it. The Sun is held stationary, so the day/night
+     terminator stays put while the Earth rotates beneath it.</p>
+  <div class="legend">
+    <div><span class="sw" style="background:#ff3b3b"></span>Z_ECI · spin axis</div>
+    <div><span class="sw" style="background:#00e5ff"></span>X_ECEF</div>
+    <div><span class="sw" style="background:#ff9f1c"></span>X_ECI</div>
+    <div><span class="sw" style="background:#ff4dd2"></span>Y_ECEF</div>
+    <div><span class="sw" style="background:#8aff5a"></span>Y_ECI</div>
+    <div><span class="sw" style="background:#ffe066"></span>Sun</div>
+  </div>
+  <div id="readout">
+    <div class="big"><span id="rotnum">0.00</span> / 5</div>
+    <div class="sub">rotations completed</div>
+    <div class="bar"><i id="prog"></i></div>
+  </div>
+</div>
+
+<div id="controls" class="panel">
+  <button id="playBtn">❚❚ Pause</button>
+  <button id="replayBtn">↺ Replay</button>
+  <div class="ctl"><span>Speed</span>
+    <input id="speed" type="range" min="0.1" max="3" step="0.1" value="1">
+    <span id="speedVal">1.0×</span></div>
+  <div class="ctl"><input id="axesChk" type="checkbox" checked>
+    <label for="axesChk">Axes</label></div>
+</div>
+
+<div class="hint">drag to orbit · scroll to zoom</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// --------------------------------------------------------------------------- //
+//  Constants
+// --------------------------------------------------------------------------- //
+const ROTATIONS   = 5;                         // run length
+const TWO_PI      = Math.PI * 2;
+const R           = 1.0;                        // Earth radius (scene units)
+const AXIS_LEN    = 1.85;
+// Stationary Sun direction in the ECI frame.
+const SUN_DIR     = new THREE.Vector3(1.0, 0.25, -0.35).normalize();
+// Rotate the texture so 0° longitude (Greenwich) faces +X at t = 0.
+const PRIME_MERIDIAN_OFFSET = -Math.PI / 2;
+const BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/';
+
+// --------------------------------------------------------------------------- //
+//  Renderer / scene / camera   (Z is "up": the North Pole points up)
+// --------------------------------------------------------------------------- //
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 2000);
+camera.up.set(0, 0, 1);
+camera.position.set(3.4, -3.6, 2.4);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 1.6;
+controls.maxDistance = 14;
+
+// --------------------------------------------------------------------------- //
+//  Starfield (procedural, so it always works offline)
+// --------------------------------------------------------------------------- //
+(function makeStars() {
+  const N = 5500, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < N; i++) {
+    const r = 120 + Math.random() * 600;
+    const u = Math.random() * 2 - 1, t = Math.random() * TWO_PI;
+    const s = Math.sqrt(1 - u * u);
+    pos[3*i] = r*s*Math.cos(t); pos[3*i+1] = r*s*Math.sin(t); pos[3*i+2] = r*u;
+    c.setHSL(0.55 + Math.random()*0.12, 0.5, 0.6 + Math.random()*0.4);
+    col[3*i] = c.r; col[3*i+1] = c.g; col[3*i+2] = c.b;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial(
+    { size: 1.4, sizeAttenuation: false, vertexColors: true,
+      transparent: true, opacity: 0.9 })));
+})();
+
+// --------------------------------------------------------------------------- //
+//  Texture loading (with 1×1 placeholders so the shader never breaks)
+// --------------------------------------------------------------------------- //
+function placeholder(rgb) {
+  const t = new THREE.DataTexture(new Uint8Array([...rgb, 255]), 1, 1);
+  t.needsUpdate = true; return t;
+}
+const loader = new THREE.TextureLoader();
+loader.setCrossOrigin('anonymous');
+
+function load(name, fallback, srgb) {
+  return new Promise((resolve) => {
+    loader.load(BASE + name,
+      (tex) => { if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+                 tex.anisotropy = 8; resolve(tex); },
+      undefined,
+      () => resolve(placeholder(fallback)));   // graceful fallback
+  });
+}
+
+const uniforms = {
+  dayMap:      { value: placeholder([20, 50, 95]) },
+  nightMap:    { value: placeholder([0, 0, 0]) },
+  specularMap: { value: placeholder([255, 255, 255]) },
+  cloudsMap:   { value: placeholder([0, 0, 0]) },
+  normalMap:   { value: placeholder([128, 128, 255]) },
+  sunDirection:{ value: SUN_DIR.clone() },
+  cloudOffset: { value: 0.0 },
+};
+
+// --------------------------------------------------------------------------- //
+//  Earth  — custom shader: day/night, ocean specular, lit clouds, bump, rim
+// --------------------------------------------------------------------------- //
+const earthMat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    varying vec3 vWorldNormal;
+    varying vec3 vWorldPos;
+    void main() {
+      vUv = uv;
+      vWorldNormal = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorldPos = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    uniform sampler2D dayMap, nightMap, specularMap, cloudsMap, normalMap;
+    uniform vec3 sunDirection;
+    uniform float cloudOffset;
+    varying vec2 vUv;
+    varying vec3 vWorldNormal;
+    varying vec3 vWorldPos;
+
+    // Screen-space-derivative cotangent frame (perturb normal w/o tangents).
+    vec3 perturbNormal(vec3 N, vec3 V, vec2 uv) {
+      vec3 dp1 = dFdx(V), dp2 = dFdy(V);
+      vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+      vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+      vec3 T = dp2perp * du1.x + dp1perp * du2.x;
+      vec3 B = dp2perp * du1.y + dp1perp * du2.y;
+      float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+      mat3 TBN = mat3(T * invmax, B * invmax, N);
+      vec3 map = texture2D(normalMap, uv).xyz * 2.0 - 1.0;
+      map.xy *= 0.8;
+      return normalize(TBN * map);
+    }
+
+    void main() {
+      vec3 N = normalize(vWorldNormal);
+      vec3 P = vWorldPos;
+      N = perturbNormal(N, -normalize(cameraPosition - P), vUv);
+
+      vec3 L = normalize(sunDirection);
+      vec3 Vd = normalize(cameraPosition - P);
+      float diff = dot(N, L);
+      float day  = smoothstep(-0.08, 0.30, diff);     // soft terminator
+
+      vec3 dayCol   = texture2D(dayMap,   vUv).rgb;
+      vec3 nightCol = texture2D(nightMap, vUv).rgb;
+      float ocean   = texture2D(specularMap, vUv).r;  // white = water
+
+      // Diffuse day side + warm twilight tint near the terminator.
+      vec3 lit = dayCol * (0.04 + 1.05 * max(diff, 0.0));
+      float twilight = day * (1.0 - smoothstep(0.0, 0.35, diff));
+      lit += vec3(0.55, 0.22, 0.08) * twilight * 0.6;
+
+      // City lights on the dark side only.
+      vec3 base = mix(nightCol * 1.7, lit, day);
+
+      // Glossy ocean sun-glint.
+      vec3 H = normalize(L + Vd);
+      float spec = pow(max(dot(N, H), 0.0), 80.0) * ocean * day;
+      base += vec3(1.0, 0.95, 0.82) * spec * 0.9;
+
+      // Clouds: lit white, drifting slowly, casting a faint soft shadow.
+      vec4 cloud = texture2D(cloudsMap, vUv + vec2(cloudOffset, 0.0));
+      float cov = max(cloud.a, cloud.r);
+      float cloudLit = 0.05 + 1.0 * max(diff, 0.0);
+      base = mix(base, vec3(cloudLit), cov * day * 0.85 + cov * (1.0 - day) * 0.04);
+
+      // Atmospheric fresnel rim on the sunlit limb.
+      float fres = pow(1.0 - max(dot(N, Vd), 0.0), 2.5);
+      base += vec3(0.30, 0.58, 1.0) * fres * day * 0.55;
+
+      gl_FragColor = vec4(base, 1.0);
+    }`,
+});
+
+const earthGeo = new THREE.SphereGeometry(R, 96, 96);
+const earth = new THREE.Mesh(earthGeo, earthMat);
+// Bring the texture's North Pole (+Y) onto +Z, then align Greenwich to +X.
+earth.rotation.x = Math.PI / 2;
+const earthSpin = new THREE.Group();   // spins about Z (the ECI/ECEF Z axis)
+earthSpin.add(earth);
+earthSpin.rotation.z = PRIME_MERIDIAN_OFFSET;
+scene.add(earthSpin);
+
+// --------------------------------------------------------------------------- //
+//  Atmosphere shell (additive fresnel glow, does not rotate)
+// --------------------------------------------------------------------------- //
+const atmo = new THREE.Mesh(
+  new THREE.SphereGeometry(R * 1.025, 64, 64),
+  new THREE.ShaderMaterial({
+    transparent: true, side: THREE.BackSide, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: { sunDirection: { value: SUN_DIR.clone() } },
+    vertexShader: /* glsl */`
+      varying vec3 vN; varying vec3 vWP;
+      void main() {
+        vN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 sunDirection;
+      varying vec3 vN; varying vec3 vWP;
+      void main() {
+        vec3 V = normalize(cameraPosition - vWP);
+        float rim = pow(0.72 - dot(vN, V), 2.4);
+        float sun = max(dot(normalize(vN), normalize(sunDirection)), 0.0);
+        gl_FragColor = vec4(vec3(0.30, 0.60, 1.0) * rim * (0.25 + 0.9 * sun), 1.0);
+      }`,
+  })
+);
+scene.add(atmo);
+
+// --------------------------------------------------------------------------- //
+//  Sun glow sprite
+// --------------------------------------------------------------------------- //
+(function makeSun() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d').createRadialGradient(64,64,0, 64,64,64);
+  g.addColorStop(0, 'rgba(255,250,220,1)');
+  g.addColorStop(0.25, 'rgba(255,228,140,0.85)');
+  g.addColorStop(1, 'rgba(255,210,90,0)');
+  const ctx = c.getContext('2d'); ctx.fillStyle = g; ctx.fillRect(0,0,128,128);
+  const tex = new THREE.CanvasTexture(c);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial(
+    { map: tex, blending: THREE.AdditiveBlending, depthWrite: false }));
+  sp.scale.setScalar(2.4);
+  sp.position.copy(SUN_DIR).multiplyScalar(8);
+  scene.add(sp);
+})();
+
+// --------------------------------------------------------------------------- //
+//  Axes (ArrowHelper) + text-sprite labels
+// --------------------------------------------------------------------------- //
+function label(text, color) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold 34px -apple-system, Segoe UI, sans-serif';
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 6;
+  ctx.fillText(text, 128, 34);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial(
+    { map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  sp.scale.set(0.62, 0.155, 1);
+  return sp;
+}
+function axis(dir, len, hex, name, parent) {
+  const color = new THREE.Color(hex);
+  const arrow = new THREE.ArrowHelper(
+    dir.clone().normalize(), new THREE.Vector3(), len, color, 0.16, 0.075);
+  arrow.line.material.linewidth = 2;
+  parent.add(arrow);
+  const lab = label(name, '#' + color.getHexString());
+  lab.position.copy(dir).multiplyScalar(len * 1.12);
+  parent.add(lab);
+  return arrow;
+}
+
+const axesGroup = new THREE.Group(); scene.add(axesGroup);
+
+// ECI frame — fixed in space.
+axis(new THREE.Vector3(1,0,0), AXIS_LEN, '#ff9f1c', 'X_ECI', axesGroup);
+axis(new THREE.Vector3(0,1,0), AXIS_LEN, '#8aff5a', 'Y_ECI', axesGroup);
+axis(new THREE.Vector3(0,0,1), AXIS_LEN, '#ff3b3b', 'Z_ECI', axesGroup);
+
+// ECEF frame — rotates with the crust (only X & Y; Z coincides with ECI Z).
+const ecef = new THREE.Group(); axesGroup.add(ecef);
+axis(new THREE.Vector3(1,0,0), AXIS_LEN * 0.92, '#00e5ff', 'X_ECEF', ecef);
+axis(new THREE.Vector3(0,1,0), AXIS_LEN * 0.92, '#ff4dd2', 'Y_ECEF', ecef);
+
+// --------------------------------------------------------------------------- //
+//  UI wiring
+// --------------------------------------------------------------------------- //
+let angle = 0, speed = 1, playing = true;
+const elRot = document.getElementById('rotnum');
+const elProg = document.getElementById('prog');
+const playBtn = document.getElementById('playBtn');
+const elSpeedV = document.getElementById('speedVal');
+
+playBtn.onclick = () => {
+  playing = !playing;
+  playBtn.textContent = playing ? '❚❚ Pause' : '▶ Play';
+};
+document.getElementById('replayBtn').onclick = () => {
+  angle = 0; playing = true; playBtn.textContent = '❚❚ Pause';
+};
+document.getElementById('speed').oninput = (e) => {
+  speed = parseFloat(e.target.value); elSpeedV.textContent = speed.toFixed(1) + '×';
+};
+document.getElementById('axesChk').onchange = (e) => {
+  axesGroup.visible = e.target.checked;
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// --------------------------------------------------------------------------- //
+//  Animation loop  — base rate: one rotation every 6 s; stop after 5.
+// --------------------------------------------------------------------------- //
+const OMEGA = TWO_PI / 6;     // rad / s at 1× speed
+const clock = new THREE.Clock();
+
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (playing && angle < ROTATIONS * TWO_PI) {
+    angle = Math.min(angle + OMEGA * speed * dt, ROTATIONS * TWO_PI);
+    if (angle >= ROTATIONS * TWO_PI) {
+      playing = false; playBtn.textContent = '▶ Play';
+    }
+  }
+  earthSpin.rotation.z = PRIME_MERIDIAN_OFFSET + angle;
+  ecef.rotation.z = angle;
+  uniforms.cloudOffset.value = (performance.now() * 1e-5) % 1;
+
+  const rot = angle / TWO_PI;
+  elRot.textContent = rot.toFixed(2);
+  elProg.style.width = (rot / ROTATIONS * 100) + '%';
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// --------------------------------------------------------------------------- //
+//  Kick off: load textures, hide the spinner, start animating.
+// --------------------------------------------------------------------------- //
+Promise.all([
+  load('earth_atmos_2048.jpg',    [20, 50, 95],   true ).then(t => uniforms.dayMap.value = t),
+  load('earth_lights_2048.png',   [0, 0, 0],      true ).then(t => uniforms.nightMap.value = t),
+  load('earth_specular_2048.jpg', [255,255,255],  false).then(t => uniforms.specularMap.value = t),
+  load('earth_clouds_1024.png',   [0, 0, 0],      true ).then(t => uniforms.cloudsMap.value = t),
+  load('earth_normal_2048.jpg',   [128,128,255],  false).then(t => uniforms.normalMap.value = t),
+]).finally(() => {
+  const l = document.getElementById('loading');
+  l.style.opacity = '0'; setTimeout(() => l.remove(), 600);
+});
+
+tick();
+</script>
+</body>
+</html>
